@@ -55,26 +55,24 @@ class BookingRepository extends BaseRepository
      */
     public function getUsersJobs($user_id)
     {
-        $cuser = User::find($user_id);
+        $cuser = User::findorFail($user_id);
         $usertype = '';
-        $emergencyJobs = array();
-        $noramlJobs = array();
-        if ($cuser && $cuser->is('customer')) {
-            $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback')->whereIn('status', ['pending', 'assigned', 'started'])->orderBy('due', 'asc')->get();
-            $usertype = 'customer';
-        } elseif ($cuser && $cuser->is('translator')) {
-            $jobs = Job::getTranslatorJobs($cuser->id, 'new');
-            $jobs = $jobs->pluck('jobs')->all();
-            $usertype = 'translator';
-        }
-        if ($jobs) {
-            foreach ($jobs as $jobitem) {
-                if ($jobitem->immediate == 'yes') {
-                    $emergencyJobs[] = $jobitem;
-                } else {
-                    $noramlJobs[] = $jobitem;
-                }
+
+        if ($cuser){
+            if ( $cuser->is('customer')) {
+                $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback')->whereIn('status', ['pending', 'assigned', 'started'])->orderBy('due', 'asc')->get();
+                $usertype = 'customer';
+            } elseif ( $cuser->is('translator')) {
+                $jobs = Job::getTranslatorJobs($cuser->id, 'new')->pluck('jobs')->all();
+                $usertype = 'translator';
             }
+        }
+
+        if ($jobs) {
+            $immediate_jobs=$jobs->where('immediate','yes');
+            $emergencyJobs=$immediate_jobs->get()->toArray();
+            $noramlJobs = $jobs->whereNotIn('id',$immediate_jobs->pluck('id'))->get()->toArray();
+
             $noramlJobs = collect($noramlJobs)->each(function ($item, $key) use ($user_id) {
                 $item['usercheck'] = Job::checkParticularJob($user_id, $item);
             })->sortBy('due')->all();
@@ -89,31 +87,20 @@ class BookingRepository extends BaseRepository
      */
     public function getUsersJobsHistory($user_id, $page)
     {
-        if (isset($page)) {
-            $pagenum = $page;
-        } else {
-            $pagenum = "1";
-        }
+        $pagenum = (isset($page)) ?   $page :  "1";
+
         $cuser = User::find($user_id);
-        $usertype = '';
-        $emergencyJobs = array();
-        $noramlJobs = array();
-        if ($cuser && $cuser->is('customer')) {
-            $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback', 'distance')->whereIn('status', ['completed', 'withdrawbefore24', 'withdrawafter24', 'timedout'])->orderBy('due', 'desc')->paginate(15);
-            $usertype = 'customer';
-            return ['emergencyJobs' => $emergencyJobs, 'noramlJobs' => [], 'jobs' => $jobs, 'cuser' => $cuser, 'usertype' => $usertype, 'numpages' => 0, 'pagenum' => 0];
-        } elseif ($cuser && $cuser->is('translator')) {
-            $jobs_ids = Job::getTranslatorJobsHistoric($cuser->id, 'historic', $pagenum);
-            $totaljobs = $jobs_ids->total();
-            $numpages = ceil($totaljobs / 15);
 
-            $usertype = 'translator';
+        if ($cuser) {
+            if ($cuser->is('customer')) {
+                $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback', 'distance')->whereIn('status', ['completed', 'withdrawbefore24', 'withdrawafter24', 'timedout'])->orderBy('due', 'desc')->paginate(15);
+                return ['emergencyJobs' => [], 'noramlJobs' => [], 'jobs' => $jobs, 'cuser' => $cuser, 'usertype' => 'customer', 'numpages' => 0, 'pagenum' => 0];
+            }
+            elseif ($cuser->is('translator')) {
+                $jobs_ids = Job::getTranslatorJobsHistoric($cuser->id, 'historic', $pagenum);
 
-            $jobs = $jobs_ids;
-            $noramlJobs = $jobs_ids;
-//            $jobs['data'] = $noramlJobs;
-//            $jobs['total'] = $totaljobs;
-            return ['emergencyJobs' => $emergencyJobs, 'noramlJobs' => $noramlJobs, 'jobs' => $jobs, 'cuser' => $cuser, 'usertype' => $usertype, 'numpages' => $numpages, 'pagenum' => $pagenum];
+                return ['emergencyJobs' => [], 'noramlJobs' => $jobs_ids, 'jobs' => $jobs_ids, 'cuser' => $cuser, 'usertype' => 'translator', 'numpages' => ceil($jobs_ids->total() / 15), 'pagenum' => $pagenum];
+            }
         }
     }
 
@@ -131,57 +118,50 @@ class BookingRepository extends BaseRepository
             $cuser = $user;
 
             if (!isset($data['from_language_id'])) {
-                $response['status'] = 'fail';
-                $response['message'] = "Du måste fylla in alla fält";
-                $response['field_name'] = "from_language_id";
-                return $response;
+                return [
+                    'status'=>'fail',
+                    'message'=>"Du måste fylla in alla fält",
+                    'field_name'=>"from_language_id"
+                ];
+            }
+            if (isset($data['duration']) && $data['duration'] == '') {
+
+                return [
+                    'status'=>'fail',
+                    'message'=>"Du måste fylla in alla fält",
+                    'field_name'=>"duration"
+                ];
             }
             if ($data['immediate'] == 'no') {
                 if (isset($data['due_date']) && $data['due_date'] == '') {
-                    $response['status'] = 'fail';
-                    $response['message'] = "Du måste fylla in alla fält";
-                    $response['field_name'] = "due_date";
-                    return $response;
+                    return [
+                        'status'=>'fail',
+                        'message'=>"Du måste fylla in alla fält",
+                        'field_name'=>"due_date"
+                    ];
                 }
                 if (isset($data['due_time']) && $data['due_time'] == '') {
-                    $response['status'] = 'fail';
-                    $response['message'] = "Du måste fylla in alla fält";
-                    $response['field_name'] = "due_time";
-                    return $response;
+
+                    return [
+                        'status'=>'fail',
+                        'message'=>"Du måste fylla in alla fält",
+                        'field_name'=>"due_time"
+                    ];
                 }
                 if (!isset($data['customer_phone_type']) && !isset($data['customer_physical_type'])) {
-                    $response['status'] = 'fail';
-                    $response['message'] = "Du måste göra ett val här";
-                    $response['field_name'] = "customer_phone_type";
-                    return $response;
+
+                    return [
+                        'status'=>'fail',
+                        'message'=>"Du måste göra ett val här",
+                        'field_name'=>"customer_phone_type"
+                    ];
                 }
-                if (isset($data['duration']) && $data['duration'] == '') {
-                    $response['status'] = 'fail';
-                    $response['message'] = "Du måste fylla in alla fält";
-                    $response['field_name'] = "duration";
-                    return $response;
-                }
-            } else {
-                if (isset($data['duration']) && $data['duration'] == '') {
-                    $response['status'] = 'fail';
-                    $response['message'] = "Du måste fylla in alla fält";
-                    $response['field_name'] = "duration";
-                    return $response;
-                }
-            }
-            if (isset($data['customer_phone_type'])) {
-                $data['customer_phone_type'] = 'yes';
-            } else {
-                $data['customer_phone_type'] = 'no';
             }
 
-            if (isset($data['customer_physical_type'])) {
-                $data['customer_physical_type'] = 'yes';
-                $response['customer_physical_type'] = 'yes';
-            } else {
-                $data['customer_physical_type'] = 'no';
-                $response['customer_physical_type'] = 'no';
-            }
+            $data['customer_phone_type'] = (isset($data['customer_phone_type'])) ? 'yes' :'no';
+            $data['customer_physical_type'] = (isset($data['customer_physical_type'])) ? 'yes' :'no';
+            $cutomer['customer_physical_type'] = $data['customer_physical_type'] ;
+
 
             if ($data['immediate'] == 'yes') {
                 $due_carbon = Carbon::now()->addMinute($immediatetime);
@@ -201,23 +181,23 @@ class BookingRepository extends BaseRepository
                     return $response;
                 }
             }
-            if (in_array('male', $data['job_for'])) {
-                $data['gender'] = 'male';
-            } else if (in_array('female', $data['job_for'])) {
-                $data['gender'] = 'female';
+            $data['gender']= (in_array('male', $data['job_for']))? 'male' : null ;
+            $data['gender']= ($data['gender'] == null && in_array('female', $data['job_for']))? 'female' : null ;
+
+            $data['certified']= (in_array('normal', $data['job_for']))? 'normal' : null ;
+            if (in_array('certified', $data['job_for'])){
+                if ($data['certified'] == null)
+                    $data['certified']='yes';
+
+                else
+                    $data['certified'] = 'both';
             }
-            if (in_array('normal', $data['job_for'])) {
-                $data['certified'] = 'normal';
-            }
-            else if (in_array('certified', $data['job_for'])) {
-                $data['certified'] = 'yes';
-            } else if (in_array('certified_in_law', $data['job_for'])) {
-                $data['certified'] = 'law';
-            } else if (in_array('certified_in_helth', $data['job_for'])) {
-                $data['certified'] = 'health';
-            }
+            $data['certified']= ($data['certified'] == null &&in_array('certified', $data['job_for']))? 'yes' : null ;
+            $data['certified']= ($data['certified'] == null &&in_array('certified_in_law', $data['job_for']))? 'law' : null ;
+            $data['certified']= ($data['certified'] == null &&in_array('certified_in_helth', $data['job_for']))? 'health' : null ;
+
             if (in_array('normal', $data['job_for']) && in_array('certified', $data['job_for'])) {
-                $data['certified'] = 'both';
+
             }
             else if(in_array('normal', $data['job_for']) && in_array('certified_in_law', $data['job_for']))
             {
