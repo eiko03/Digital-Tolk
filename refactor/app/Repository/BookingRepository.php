@@ -196,7 +196,8 @@ class BookingRepository extends BaseRepository
             $data['certified']= ($data['certified'] == null &&in_array('certified_in_law', $data['job_for']))? 'law' : null ;
             $data['certified']= ($data['certified'] == null &&in_array('certified_in_helth', $data['job_for']))? 'health' : null ;
 
-            if (in_array('normal', $data['job_for']) && in_array('certified', $data['job_for'])) {
+            if (in_array('normal', $data['job_for']))  {
+                $data['certified'] = 'law';
 
             }
             else if(in_array('normal', $data['job_for']) && in_array('certified_in_law', $data['job_for']))
